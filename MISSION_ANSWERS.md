@@ -448,9 +448,75 @@ INFO:     Finished server process [14796]
 - Handler `handle_sigterm` ghi `signal 2` (SIGINT) ở cuối log, sau khi shutdown xong.
 - **Giới hạn của lần thử:** đây là SIGINT, chưa phải SIGTERM, và không có request nào đang chạy lúc tắt, nên chưa chứng minh được request dở dang được hoàn thành.
 
-### Exercise 5.3 – 5.5: Stateless và load balancing
+### Exercise 5.3: Stateless design (`05-scaling-reliability/production/app.py`)
 
-(chờ output)
+- **Vấn đề khi giữ state trong RAM:** mỗi instance có bộ nhớ riêng. Request sau đi vào instance khác sẽ không thấy lịch sử, và restart là mất.
+- **Cách làm:** session và lịch sử lưu trong Redis ở key `session:{session_id}`, TTL 1 giờ, giữ tối đa 20 message (`save_session`, `load_session`, `append_to_history`). Instance nào cũng đọc được.
+
+**Hạn chế tìm thấy:**
+
+1. Nếu không kết nối được Redis lúc khởi động, code (dòng 35–45) chuyển sang lưu trong RAM. Khi đó `USE_REDIS = False` nên `/ready` (dòng 208–215) vẫn trả 200: instance trông khoẻ nhưng không còn stateless. Với nhiều instance, lịch sử sẽ lúc có lúc mất. Nên để `/ready` trả 503. (Nhận xét từ code, chưa chạy thử trường hợp này.)
+2. `append_to_history` đọc, sửa rồi ghi lại cả session, không nguyên tử: hai request đồng thời cùng session có thể ghi đè lên nhau. (Nhận xét từ code.)
+3. `turn` lớn hơn thực tế 1: dòng 143 đọc history sau khi đã thêm câu hỏi hiện tại, dòng 154 lại cộng thêm 1. Chạy thử: câu đầu tiên của session trả `turn=2`.
+
+### Exercise 5.4: Load balancing
+
+Các lệnh của 5.4 và 5.5 do AI (Claude Code) chạy trên máy tôi theo yêu cầu của tôi.
+
+```text
+> docker compose -p k5-day14-scaling up -d --build --scale agent=3 --wait
+> docker compose -p k5-day14-scaling ps        (rút gọn cột)
+NAME                       SERVICE   STATUS         PORTS
+k5-day14-scaling-agent-1   agent     Up (healthy)   8000/tcp
+k5-day14-scaling-agent-2   agent     Up (healthy)   8000/tcp
+k5-day14-scaling-agent-3   agent     Up (healthy)   8000/tcp
+k5-day14-scaling-nginx-1   nginx     Up             0.0.0.0:8080->80/tcp
+k5-day14-scaling-redis-1   redis     Up (healthy)   6379/tcp
+```
+
+Instance ID của từng container (lấy từ `/health`):
+
+```text
+k5-day14-scaling-agent-1 -> instance-68260e
+k5-day14-scaling-agent-2 -> instance-2a1ed8
+k5-day14-scaling-agent-3 -> instance-9f368e
+```
+
+Số request `POST /chat` mỗi container nhận khi chạy `test_stateless.py` (5 request): agent-1: **2**, agent-2: **2**, agent-3: **1**. Nginx chia luân phiên giữa 3 instance.
+
+Cổng 8080 lúc đó đang do Nginx của stack Part 7 giữ; chỉ container này được tạm dừng trong lúc chạy Part 5 rồi bật lại.
+
+### Exercise 5.5: Test stateless
+
+```text
+> python test_stateless.py        (rút gọn phần câu trả lời)
+Session ID: 44d8a4d1-d180-4edd-b139-ef6ba9a7ef5a
+Request 1: [instance-68260e]   What is Docker?
+Request 2: [instance-2a1ed8]   Why do we need containers?
+Request 3: [instance-9f368e]   What is Kubernetes?
+Request 4: [instance-68260e]   How does load balancing work?
+Request 5: [instance-2a1ed8]   What is Redis used for?
+Total requests: 5
+Instances used: {'instance-9f368e', 'instance-68260e', 'instance-2a1ed8'}
+✅ All requests served despite different instances!
+--- Conversation History ---
+Total messages: 10
+✅ Session history preserved across all instances via Redis!
+```
+
+Script không tự tắt instance nào, nên thử thêm: tạo session, dừng container đã phục vụ request đầu (`docker stop k5-day14-scaling-agent-1`), rồi gửi tiếp 4 request cùng session:
+
+```text
+before    : turn=2  served_by=instance-68260e  storage=redis
+(docker stop k5-day14-scaling-agent-1)
+after #1  : turn=3  served_by=instance-2a1ed8  storage=redis
+after #2  : turn=4  served_by=instance-9f368e  storage=redis
+after #3  : turn=5  served_by=instance-2a1ed8  storage=redis
+after #4  : turn=6  served_by=instance-9f368e  storage=redis
+history count = 10
+```
+
+**Giải thích:** cả 4 request sau khi tắt đều thành công trên 2 instance còn lại. Lịch sử có đủ 10 message (5 câu hỏi, 5 câu trả lời), gồm cả lượt do instance đã tắt xử lý, vì state nằm trong Redis chứ không nằm trong instance. Phép thử này dừng container chủ động khi không có request đang chạy, và không thử trường hợp Redis gặp sự cố. Redis hiện chỉ có 1 instance nên vẫn là điểm lỗi đơn.
 
 ## Part 6: Output `check_production_ready.py`
 
@@ -498,7 +564,7 @@ Xử lý input sai (AI thử trên Windows, gửi kèm API key hợp lệ): JSON
 | 2 | Nhờ AI hoàn thiện báo cáo theo tiến độ | AI soạn phần Part 1 (bảng anti-pattern, bảng so sánh, nhận xét) từ code trong repo và output tôi đã chạy | (tự điền: đã đọc lại code, kiểm tra và sửa những gì) |
 | 3 | Tiếp tục nhờ AI cho Part 2 | AI soạn câu trả lời Exercise 2.1 và 2.3, sơ đồ và nhận xét Exercise 2.4; chạy `docker history` và `docker compose ps` để kiểm tra; chỉ ra lỗi trích dẫn JSON trên PowerShell (do lệnh AI đưa ban đầu) và cách sửa bằng `--%` | Tự build, chạy container, gọi API và đo `docker images`. (tự điền: đã kiểm tra và sửa gì) |
 | 4 | Tiếp tục nhờ AI cho Part 4 | AI soạn câu trả lời Exercise 4.1–4.4 từ code và output tôi đã chạy, chỉ ra các hạn chế của cost guard | Tự chạy các lệnh test 401 / 403 / 200 / 429. (tự điền: đã kiểm tra và sửa gì) |
-| 5 | Tiếp tục nhờ AI cho Part 5 | AI soạn câu trả lời từ code và output tôi đã chạy | Tự chạy các lệnh test Part 5. (tự điền: đã kiểm tra và sửa gì) |
+| 5 | Tiếp tục nhờ AI cho Part 5 | AI soạn câu trả lời từ code và output; AI chạy toàn bộ lệnh của Exercise 5.4 và 5.5 (bật stack, `test_stateless.py`, dừng 1 instance) | Tự chạy các lệnh của 5.1 và 5.2. 5.3–5.5: (tự điền: đã tự chạy lại, kiểm tra và sửa gì) |
 | 6 | Dùng một phiên AI chạy song song cho Part 7 | (tự điền: hỏi gì, AI đã sửa file nào và chạy những lệnh nào) | (tự điền: đã tự chạy lại, kiểm tra code và số đo thế nào) |
 | 7 | Nhờ AI viết code Part 6 | AI viết toàn bộ `app/*.py`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `railway.toml`, `render.yaml` (tôi đã sửa `.env.example` và bắt đầu `config.py` trước đó); AI chạy script chấm trên Windows (11/12, 42/42 phép kiểm tra chạy được đạt) và thử input sai (trả 422) | Tự chạy script chấm đầy đủ trong WSL: PASS 12/12; hỏi lại AI về transaction trong rate limiter và cách xử lý SIGTERM. (tự điền thêm: đã đọc code, kiểm tra và sửa gì) |
 | 8 | Nhờ AI hướng dẫn deploy Render và viết Part 3 | AI hướng dẫn tạo Blueprint, cách đưa key vào biến mà không in ra; commit và push Part 6 theo yêu cầu của tôi; soạn `DEPLOYMENT.md`, phần so sánh config và Exercise 3.3 | Tự tạo Blueprint trên Render, tự chạy 4 lệnh kiểm tra (200 / 200 / 401 / 200). (tự điền: đã đọc lại và sửa gì) |
