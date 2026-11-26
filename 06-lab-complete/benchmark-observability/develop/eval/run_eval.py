@@ -15,6 +15,8 @@ Ví dụ:
   python eval/run_eval.py --out reports/eval_v2.json \
          --baseline reports/eval_v1.json                             # so sánh v2 với v1
   python eval/run_eval.py --min-accuracy 0.85                        # quality gate cho CI
+  python eval/run_eval.py --url http://localhost:8080 --username demo  # stack benchmark (JWT,
+                                                                     # mật khẩu từ AUTH_PASSWORD)
 
 Exit code 1 nếu accuracy < --min-accuracy hoặc có regression so với baseline
 → dùng được làm bước "quality gate" trong CI/CD trước khi deploy.
@@ -29,6 +31,39 @@ from pathlib import Path
 import httpx
 
 DEFAULT_DATASET = Path(__file__).parent / "golden_dataset.jsonl"
+
+
+def login(url: str, username: str, password: str, timeout: float) -> str:
+    """POST /auth/token → access_token (stack benchmark dùng JWT). Lỗi → thoát."""
+    try:
+        resp = httpx.post(f"{url}/auth/token", json={"username": username, "password": password},
+                          timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise SystemExit(f"❌ Không kết nối được {url}/auth/token: {exc}")
+    if resp.status_code != 200:
+        raise SystemExit(f"❌ Đăng nhập thất bại: HTTP {resp.status_code} tại {url}/auth/token")
+    return resp.json()["access_token"]
+
+
+def add_auth_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--api-key", help="X-API-Key (agent develop / app chính). "
+                        "Mặc định đọc AGENT_API_KEY nếu không có --username")
+    parser.add_argument("--username", help="Đăng nhập JWT (stack benchmark). Chỉ lấy từ cờ")
+    parser.add_argument("--password", default=os.getenv("AUTH_PASSWORD"),
+                        help="Mật khẩu JWT, mặc định đọc AUTH_PASSWORD")
+
+
+def resolve_auth_headers(parser: argparse.ArgumentParser, args) -> dict:
+    """--username → đăng nhập, gửi Bearer; không có → X-API-Key như cũ (hoặc không auth)."""
+    if args.username:
+        if args.api_key:
+            parser.error("không dùng --username cùng --api-key: chọn JWT hoặc API key")
+        if not args.password:
+            parser.error("có --username thì cần --password hoặc biến AUTH_PASSWORD")
+        token = login(args.url, args.username, args.password, args.timeout)
+        return {"Authorization": f"Bearer {token}"}
+    api_key = args.api_key or os.getenv("AGENT_API_KEY")
+    return {"X-API-Key": api_key} if api_key else {}
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -69,9 +104,8 @@ def ask(client: httpx.Client, url: str, question: str, headers: dict, retries: i
     return {"ok": False, "error": error, "latency_ms": latency_ms}
 
 
-def run_eval(args) -> dict:
+def run_eval(args, headers: dict) -> dict:
     dataset = load_dataset(Path(args.dataset))
-    headers = {"X-API-Key": args.api_key} if args.api_key else {}
     results = []
 
     with httpx.Client(timeout=args.timeout) as client:
@@ -165,7 +199,7 @@ def compare_with_baseline(report: dict, baseline: dict) -> list[str]:
 def main():
     parser = argparse.ArgumentParser(description="Eval chất lượng agent trên golden dataset")
     parser.add_argument("--url", default=os.getenv("AGENT_URL", "http://localhost:8000"))
-    parser.add_argument("--api-key", default=os.getenv("AGENT_API_KEY"))
+    add_auth_args(parser)
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
     parser.add_argument("--pass-threshold", type=float, default=0.6)
     parser.add_argument("--min-accuracy", type=float, default=0.8)
@@ -175,8 +209,9 @@ def main():
     parser.add_argument("--out", help="Lưu report JSON vào file")
     args = parser.parse_args()
 
+    headers = resolve_auth_headers(parser, args)
     print(f"\n🧪 Eval agent tại {args.url}\n")
-    report = run_eval(args)
+    report = run_eval(args, headers)
 
     print("\n" + "═" * 58)
     print(f"  EVAL REPORT — agent {report['agent_version']}")

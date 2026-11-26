@@ -13,7 +13,9 @@ class Settings:
     # Agent
     agent_version: str = os.getenv("AGENT_VERSION", "v2")          # v1 | v2
     llm_model: str = os.getenv("LLM_MODEL", "mock-llm-small")       # mock-llm-small | mock-llm-large
-    agent_api_key: str = os.getenv("AGENT_API_KEY", "")              # rỗng = tắt auth (chỉ dùng local)
+
+    # Auth (JWT_SECRET, AUTH_USERNAME, AUTH_PASSWORD, JWT_EXPIRE_MINUTES) được đọc và kiểm tra
+    # trong lifespan bởi app.auth.load_auth_config — thiếu thì agent không khởi động.
 
     # Tracing — OTel SDK tự đọc OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME...
     tracing_enabled: bool = os.getenv("TRACING_ENABLED", "true").lower() == "true"

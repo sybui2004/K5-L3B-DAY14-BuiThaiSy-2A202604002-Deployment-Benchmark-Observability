@@ -277,7 +277,7 @@ docker compose ps        # chờ tất cả "running"
 
 | Service | URL | Ghi chú |
 |---|---|---|
-| Agent (qua Nginx) | http://localhost:8080 | Header `X-API-Key: day14-lab-key` |
+| Agent (qua Nginx) | http://localhost:8080 | JWT: `POST /auth/token` (mặc định `demo` / `lab-only-demo-password`), rồi gửi `Authorization: Bearer <token>` |
 | Grafana | http://localhost:3000 | Dashboard "Day 14 — AI Agent Overview" (admin/admin) |
 | Prometheus | http://localhost:9090 | *Status → Target health*, *Alerts* |
 | Jaeger | http://localhost:16686 | Service `observable-agent` |
@@ -286,10 +286,16 @@ docker compose ps        # chờ tất cả "running"
 Kiểm tra nhanh:
 
 ```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token -H "Content-Type: application/json" \
+  -d '{"username": "demo", "password": "lab-only-demo-password"}' \
+  | python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
 curl -s -i -X POST http://localhost:8080/ask \
-  -H "X-API-Key: day14-lab-key" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"question": "Trong distributed tracing, span là gì?"}'
 ```
+
+Thiếu token, token sai hoặc hết hạn đều trả `401` kèm `WWW-Authenticate: Bearer`. Stack này không còn nhận `X-API-Key`. Tài khoản và secret mặc định nằm trong `docker-compose.yml` và **chỉ dùng cho lab local**; muốn đổi thì đặt trong `.env` (xem `.env.example`). `develop/load_test.py` và `develop/eval/run_eval.py` gọi stack này bằng `--username demo`, mật khẩu lấy từ `--password` hoặc `AUTH_PASSWORD`.
 
 Response header có `X-Trace-ID` và `X-Served-By`. Gọi vài lần sẽ thấy `X-Served-By` đổi giữa 2 instance.
 

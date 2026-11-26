@@ -9,15 +9,21 @@ Chạy qua docker compose (đã cấu hình sẵn):
   Headless : docker compose run --rm locust -f /mnt/locust/locustfile.py \
                --headless -u 30 -r 5 -t 2m --csv /mnt/results/run1
 
-Mỗi user: hỏi agent (phần lớn thời gian), thỉnh thoảng gọi /health,
+Mỗi user: đăng nhập (POST /auth/token) một lần lúc bắt đầu để lấy JWT,
+sau đó hỏi agent (phần lớn thời gian), thỉnh thoảng gọi /health,
 nghỉ 0.5–2 giây giữa các lần (giống người thật đọc câu trả lời).
+
+Thống kê login nằm ở dòng riêng "/auth/token". Login lỗi → user đó dừng.
+/ask trả 401 → request vẫn tính là lỗi, user đăng nhập lại cho lần sau.
 """
 import os
 import random
 
 from locust import HttpUser, between, task
+from locust.exception import StopUser
 
-API_KEY = os.getenv("AGENT_API_KEY", "")
+USERNAME = os.getenv("AUTH_USERNAME", "")
+PASSWORD = os.getenv("AUTH_PASSWORD", "")
 
 QUESTIONS = [
     "Docker container là gì?",
@@ -36,7 +42,20 @@ class AgentUser(HttpUser):
     wait_time = between(0.5, 2)
 
     def on_start(self):
-        self.headers = {"X-API-Key": API_KEY} if API_KEY else {}
+        if not self.login():
+            raise StopUser()
+
+    def login(self) -> bool:
+        """Lấy JWT và lưu vào self.headers. Trả False nếu không lấy được."""
+        self.headers = {}
+        with self.client.post("/auth/token", json={"username": USERNAME, "password": PASSWORD},
+                              name="/auth/token", catch_response=True) as resp:
+            token = resp.json().get("access_token") if resp.status_code == 200 else None
+            if not token:
+                resp.failure(f"Login thất bại: HTTP {resp.status_code}")
+                return False
+            self.headers = {"Authorization": f"Bearer {token}"}
+            return True
 
     @task(10)
     def ask(self):
@@ -46,6 +65,10 @@ class AgentUser(HttpUser):
                               name="/ask", catch_response=True) as resp:
             if resp.status_code == 200 and not resp.json().get("answer"):
                 resp.failure("Response 200 nhưng answer rỗng")
+            elif resp.status_code == 401:
+                resp.failure("401 — token hết hạn/không hợp lệ, đăng nhập lại")
+        if resp.status_code == 401:
+            self.login()
 
     @task(1)
     def health(self):

@@ -16,13 +16,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, Security
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from opentelemetry.trace import Status, StatusCode
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from app import metrics as m
+from app.auth import TokenResponse, issue_token, load_auth_config, require_token
 from app.config import settings
 from app.telemetry import current_trace_ids, setup_tracing, shutdown_tracing, tracer
 from utils import mock_llm
@@ -53,6 +53,8 @@ def log_event(event: str, **fields):
 # ─────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Thiếu / sai cấu hình auth → raise ở đây → uvicorn dừng, agent không khởi động
+    app.state.auth = load_auth_config()
     m.AGENT_INFO.labels(version=settings.agent_version, model=settings.llm_model).set(1)
     log_event("startup", agent_version=settings.agent_version, model=settings.llm_model,
               environment=settings.environment)
@@ -97,14 +99,10 @@ async def observe_requests(request: Request, call_next):
 setup_tracing(app)  # phải gọi trước khi app nhận request
 
 # ─────────────────────────────────────────────────────────
-# Auth (tối giản — xem Section 04 cho JWT, rate limit)
+# Auth — JWT (xem app/auth.py). Mọi lỗi token trả 401, cố ý khác Part 4
+# (04-api-gateway trả 403 cho token sai). Rate limit: xem Part 4.
 # ─────────────────────────────────────────────────────────
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-def verify_api_key(api_key: str = Security(api_key_header)):
-    if settings.agent_api_key and api_key != settings.agent_api_key:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+app.post("/auth/token", response_model=TokenResponse)(issue_token)
 
 
 # ─────────────────────────────────────────────────────────
@@ -174,7 +172,7 @@ async def run_agent(question: str) -> mock_llm.LLMResult:
 # ─────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────
-@app.post("/ask", response_model=AskResponse, dependencies=[Depends(verify_api_key)])
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(require_token)])
 async def ask(body: AskRequest, request: Request):
     try:
         result = await run_agent(body.question)

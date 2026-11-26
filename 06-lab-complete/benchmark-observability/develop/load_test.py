@@ -11,6 +11,8 @@ Ví dụ:
   python load_test.py --url http://localhost:8000 --requests 200 --concurrency 10
   python load_test.py --duration 30 --concurrency 20 --out reports/load_v2.json
   python load_test.py --slo-p95-ms 500 --slo-error-rate 0.01
+  python load_test.py --url http://localhost:8080 --username demo   # stack benchmark (JWT,
+                                                                   # mật khẩu từ AUTH_PASSWORD)
 
 Vì sao cần p95/p99 mà không chỉ average?
   → 100 request: 97 cái mất 150ms, 3 cái mất 1.7s
@@ -35,6 +37,39 @@ QUESTIONS = [
     "Graceful shutdown hoạt động ra sao khi nhận SIGTERM?",
     "Tính chi phí token của LLM như thế nào?",
 ]
+
+
+def login(url: str, username: str, password: str, timeout: float) -> str:
+    """POST /auth/token → access_token (stack benchmark dùng JWT). Lỗi → thoát."""
+    try:
+        resp = httpx.post(f"{url}/auth/token", json={"username": username, "password": password},
+                          timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise SystemExit(f"❌ Không kết nối được {url}/auth/token: {exc}")
+    if resp.status_code != 200:
+        raise SystemExit(f"❌ Đăng nhập thất bại: HTTP {resp.status_code} tại {url}/auth/token")
+    return resp.json()["access_token"]
+
+
+def add_auth_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--api-key", help="X-API-Key (agent develop / app chính). "
+                        "Mặc định đọc AGENT_API_KEY nếu không có --username")
+    parser.add_argument("--username", help="Đăng nhập JWT (stack benchmark). Chỉ lấy từ cờ")
+    parser.add_argument("--password", default=os.getenv("AUTH_PASSWORD"),
+                        help="Mật khẩu JWT, mặc định đọc AUTH_PASSWORD")
+
+
+def resolve_auth_headers(parser: argparse.ArgumentParser, args) -> dict:
+    """--username → đăng nhập, gửi Bearer; không có → X-API-Key như cũ (hoặc không auth)."""
+    if args.username:
+        if args.api_key:
+            parser.error("không dùng --username cùng --api-key: chọn JWT hoặc API key")
+        if not args.password:
+            parser.error("có --username thì cần --password hoặc biến AUTH_PASSWORD")
+        token = login(args.url, args.username, args.password, args.timeout)
+        return {"Authorization": f"Bearer {token}"}
+    api_key = args.api_key or os.getenv("AGENT_API_KEY")
+    return {"X-API-Key": api_key} if api_key else {}
 
 
 def percentile(sorted_values: list[float], p: float) -> float:
@@ -68,8 +103,7 @@ async def worker(client: httpx.AsyncClient, url: str, headers: dict, results: li
                         "cost_usd": cost})
 
 
-async def run(args) -> dict:
-    headers = {"X-API-Key": args.api_key} if args.api_key else {}
+async def run(args, headers: dict) -> dict:
     results: list[dict] = []
     counter = {"sent": 0}
     stop_at = time.perf_counter() + args.duration if args.duration else None
@@ -142,7 +176,7 @@ def print_report(report: dict, slo_p95_ms: float, slo_error_rate: float) -> bool
 def main():
     parser = argparse.ArgumentParser(description="Load test cho AI agent")
     parser.add_argument("--url", default=os.getenv("AGENT_URL", "http://localhost:8000"))
-    parser.add_argument("--api-key", default=os.getenv("AGENT_API_KEY"))
+    add_auth_args(parser)
     parser.add_argument("--requests", type=int, default=200, help="Tổng số request")
     parser.add_argument("--duration", type=float, help="Chạy theo thời gian (giây) thay vì số request")
     parser.add_argument("--concurrency", type=int, default=10, help="Số request song song")
@@ -152,7 +186,8 @@ def main():
     parser.add_argument("--out", help="Lưu report JSON vào file")
     args = parser.parse_args()
 
-    report = asyncio.run(run(args))
+    headers = resolve_auth_headers(parser, args)
+    report = asyncio.run(run(args, headers))
     passed = print_report(report, args.slo_p95_ms, args.slo_error_rate)
     report["slo"] = {"p95_ms": args.slo_p95_ms, "error_rate": args.slo_error_rate, "passed": passed}
 

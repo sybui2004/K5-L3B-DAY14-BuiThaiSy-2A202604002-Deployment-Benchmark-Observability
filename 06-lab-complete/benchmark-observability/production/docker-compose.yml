@@ -23,7 +23,12 @@ services:
       - ENVIRONMENT=lab
       - AGENT_VERSION=${AGENT_VERSION:-v2}
       - LLM_MODEL=${LLM_MODEL:-mock-llm-small}
-      - AGENT_API_KEY=${AGENT_API_KEY:-day14-lab-key}
+      # JWT auth — giá trị mặc định CHỈ cho lab local (nằm trong git, ai có repo cũng ký được
+      # token). Muốn chặt hơn: đặt JWT_SECRET trong .env (đã gitignore). Secret ≥ 32 byte.
+      - JWT_SECRET=${JWT_SECRET:-lab-only-insecure-jwt-secret-change-me-0123456789}
+      - AUTH_USERNAME=${AUTH_USERNAME:-demo}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-lab-only-demo-password}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
       # Fault injection — chỉnh để thấy dashboard/alert phản ứng
       - MOCK_LATENCY_MS=${MOCK_LATENCY_MS:-120}
       - MOCK_SLOW_RATE=${MOCK_SLOW_RATE:-0.03}
@@ -110,7 +115,9 @@ services:
     ports:
       - "8089:8089"
     environment:
-      - AGENT_API_KEY=${AGENT_API_KEY:-day14-lab-key}
+      # Cùng nguồn biến với service agent → luôn khớp
+      - AUTH_USERNAME=${AUTH_USERNAME:-demo}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-lab-only-demo-password}
     volumes:
       - ./locust:/mnt/locust:ro
       - ./benchmark-results:/mnt/results

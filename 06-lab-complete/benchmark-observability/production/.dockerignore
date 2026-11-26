@@ -9,3 +9,6 @@ nginx/
 locust/
 benchmark-results/
 *.md
+tests/
+requirements-dev.txt
+.pytest_cache/
