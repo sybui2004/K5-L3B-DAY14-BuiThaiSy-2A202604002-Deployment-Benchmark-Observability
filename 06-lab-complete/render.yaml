@@ -1,7 +1,29 @@
-# ============================================================
-# TODO (tiêu chí 12): cấu hình deploy Render (Blueprint) — có thể dùng thay railway.toml
-#   services:
-#     - type: web, runtime: docker, healthCheckPath: /health
-#     - envVars: secret như AGENT_API_KEY dùng `generateValue: true` hoặc `sync: false`,
-#       KHÔNG ghi thẳng giá trị
-# ============================================================
+# Render Blueprint. File nằm trong thư mục con nên đường dẫn tính từ gốc repo.
+services:
+  - type: web
+    name: day14-agent
+    runtime: docker
+    plan: free
+    dockerfilePath: ./06-lab-complete/Dockerfile
+    dockerContext: ./06-lab-complete
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "10"
+      - key: DAILY_BUDGET_USD
+        value: "1.0"
+      - key: AGENT_API_KEY
+        generateValue: true
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: day14-redis
+          property: connectionString
+
+  # Redis của Render (Key Value); ipAllowList rỗng = chỉ truy cập từ mạng nội bộ
+  - type: keyvalue
+    name: day14-redis
+    plan: free
+    ipAllowList: []
