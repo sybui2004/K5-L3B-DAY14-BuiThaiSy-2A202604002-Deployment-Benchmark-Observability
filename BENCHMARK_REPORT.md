@@ -69,7 +69,7 @@ Cùng `--requests 300 --concurrency 20`, khởi động lại agent cho mỗi m�
 
 ### 2.3 Ghi chú về `localhost` trên Windows
 
-Mở kết nối mới bằng client đồng bộ của `httpx` tới `http://localhost:8002/health` mất 2068–2072 ms (3 lần), còn tới `http://127.0.0.1:8002/health` mất 9–31 ms. Server chỉ nghe trên IPv4 (`0.0.0.0`). Tôi suy đoán Windows thử IPv6 (`::1`) trước nhưng chưa kiểm chứng riêng điều này. Vì vậy mọi số ở mục 2 và 3 đo qua `127.0.0.1`.
+Mở kết nối mới bằng client đồng bộ của `httpx` tới `http://localhost:8002/health` mất 2068–2072 ms (3 lần), còn tới `http://127.0.0.1:8002/health` mất 9–31 ms. Server chỉ nghe trên IPv4 (`0.0.0.0`). Nguyên nhân đã kiểm chứng: trên máy này `socket.getaddrinfo("localhost", 8002)` trả `::1` trước `127.0.0.1`, nên client thử IPv6 trước. Không có gì nghe ở `::1`, và trên Windows một kết nối bị từ chối mất khoảng 2 giây (đo được 2030 ms) mới báo lỗi, sau đó client mới chuyển sang `127.0.0.1`. Vì vậy mọi số ở mục 2 và 3 đo qua `127.0.0.1`.
 
 ---
 

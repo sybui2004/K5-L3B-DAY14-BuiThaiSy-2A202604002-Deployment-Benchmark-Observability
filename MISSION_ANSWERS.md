@@ -279,13 +279,13 @@ Tôi chỉ deploy lên Render; phần Railway dưới đây là so sánh file c�
 | Điểm | `railway.toml` | `render.yaml` | Vì sao khác |
 |---|---|---|---|
 | Phạm vi | Cách build và chạy **một** service (`[build]`, `[deploy]`) | Mô tả **cả hạ tầng**: web service và Redis (Key Value) | Blueprint của Render là Infrastructure as Code cho nhiều tài nguyên; file config của Railway gắn với từng service. |
-| Redis | Không khai báo; tạo trên dashboard hoặc CLI | Khai báo `type: keyvalue`, `ipAllowList: []` | |
+| Redis | Không khai báo; tạo trên dashboard hoặc CLI | Khai báo `type: keyvalue`, `ipAllowList: []` | `railway.toml` chỉ cấu hình một service nên Redis phải tạo riêng; Blueprint khai báo được Redis, và `ipAllowList: []` chỉ cho truy cập qua mạng nội bộ của Render. |
 | Nối `REDIS_URL` | Đặt biến trên Railway, tham chiếu service Redis | `fromService` lấy `connectionString` ngay trong file | Render nối các tài nguyên trong cùng Blueprint. |
 | Biến và secret | Không có trong file; đặt trên nền tảng | `envVars`: giá trị thường ghi thẳng, `AGENT_API_KEY` dùng `generateValue: true` | Cả hai cách đều không đưa secret vào git. |
 | Chọn Dockerfile | `builder = "DOCKERFILE"`, `dockerfilePath` | `runtime: docker`, `dockerfilePath`, `dockerContext` | Thư mục con: Render tính đường dẫn từ gốc repo (khi không đặt `rootDir`); với Railway tôi định chạy `railway up` trong `06-lab-complete/`. |
 | Health check | `healthcheckPath = "/health"`, có `healthcheckTimeout` | `healthCheckPath: /health` | Khác tên khoá và cú pháp (TOML / YAML). |
-| Restart policy | Khai báo `ON_FAILURE`, tối đa 3 lần | Không khai báo trong file | |
-| Gói dịch vụ | Không có trong file | `plan: free` | |
+| Restart policy | Khai báo `ON_FAILURE`, tối đa 3 lần | Không khai báo trong file | Railway cho chỉnh restart policy trong file; Blueprint của Render không có khoá này, nền tảng tự khởi động lại service bị crash. |
+| Gói dịch vụ | Không có trong file | `plan: free` | Render chọn loại instance theo từng service nên ghi trong Blueprint; Railway tính tiền theo mức dùng ở cấp tài khoản, không chọn gói trong file. |
 
 Cả hai đều không đặt start command riêng: dùng `CMD` trong Dockerfile, lệnh này đọc biến `PORT`.
 
