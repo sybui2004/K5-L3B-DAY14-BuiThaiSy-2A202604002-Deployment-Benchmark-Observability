@@ -1,0 +1,29 @@
+name: quality-gate
+
+on: [pull_request]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 06-lab-complete/benchmark-observability/develop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      # run_eval.py exits 1 below --min-accuracy, which fails the job.
+      # MOCK_ERROR_RATE=0: random upstream errors must not fail a pull request.
+      - name: Start agent and run eval
+        env:
+          AGENT_VERSION: v2
+          MOCK_ERROR_RATE: "0"
+        run: |
+          PORT=8000 python app.py &
+          curl -sSf --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:8000/health
+          python eval/run_eval.py --url http://127.0.0.1:8000 --min-accuracy 0.85
