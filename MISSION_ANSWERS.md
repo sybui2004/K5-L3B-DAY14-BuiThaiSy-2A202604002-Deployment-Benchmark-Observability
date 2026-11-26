@@ -257,7 +257,44 @@ agent-1  | json.decoder.JSONDecodeError: Unterminated string starting at: line 1
 
 ## Part 3: Cloud Deployment
 
-(chưa làm)
+### Exercise 3.2: Deploy Render (nền tảng chính)
+
+Tôi deploy chính agent Part 6 bằng Render Blueprint (nhánh `dev`, Blueprint Path `06-lab-complete/render.yaml`). Chi tiết ở [DEPLOYMENT.md](DEPLOYMENT.md).
+
+- URL: https://day14-agent-x6yb.onrender.com
+- Screenshot: [screenshots/running.png](screenshots/running.png)
+
+```text
+/health          200
+/ready           200
+/ask khong key   401
+/ask co key      200
+```
+
+### So sánh `railway.toml` và `render.yaml` (`06-lab-complete/`)
+
+Tôi chỉ deploy lên Render; phần Railway dưới đây là so sánh file cấu hình, chưa chạy thử trên Railway.
+
+| Điểm | `railway.toml` | `render.yaml` | Vì sao khác |
+|---|---|---|---|
+| Phạm vi | Cách build và chạy **một** service (`[build]`, `[deploy]`) | Mô tả **cả hạ tầng**: web service và Redis (Key Value) | Blueprint của Render là Infrastructure as Code cho nhiều tài nguyên; file config của Railway gắn với từng service. |
+| Redis | Không khai báo; tạo trên dashboard hoặc CLI | Khai báo `type: keyvalue`, `ipAllowList: []` | |
+| Nối `REDIS_URL` | Đặt biến trên Railway, tham chiếu service Redis | `fromService` lấy `connectionString` ngay trong file | Render nối các tài nguyên trong cùng Blueprint. |
+| Biến và secret | Không có trong file; đặt trên nền tảng | `envVars`: giá trị thường ghi thẳng, `AGENT_API_KEY` dùng `generateValue: true` | Cả hai cách đều không đưa secret vào git. |
+| Chọn Dockerfile | `builder = "DOCKERFILE"`, `dockerfilePath` | `runtime: docker`, `dockerfilePath`, `dockerContext` | Thư mục con: Render tính đường dẫn từ gốc repo (khi không đặt `rootDir`); với Railway tôi định chạy `railway up` trong `06-lab-complete/`. |
+| Health check | `healthcheckPath = "/health"`, có `healthcheckTimeout` | `healthCheckPath: /health` | Khác tên khoá và cú pháp (TOML / YAML). |
+| Restart policy | Khai báo `ON_FAILURE`, tối đa 3 lần | Không khai báo trong file | |
+| Gói dịch vụ | Không có trong file | `plan: free` | |
+
+Cả hai đều không đặt start command riêng: dùng `CMD` trong Dockerfile, lệnh này đọc biến `PORT`.
+
+So với file mẫu `03-cloud-deployment/render/render.yaml` (`runtime: python`, có `buildCommand` và `startCommand`), bản của tôi build từ Dockerfile nên môi trường trên cloud giống image đã kiểm tra ở máy local.
+
+### Exercise 3.3: Pipeline Cloud Run (đọc cấu hình, không deploy)
+
+`cloudbuild.yaml` chạy 4 bước nối tiếp nhờ `waitFor`: (1) **test** cài dependencies và chạy `pytest tests/`, test lỗi thì pipeline dừng; (2) **build** Docker image, gắn tag theo `$COMMIT_SHA` và `latest`, dùng `latest` làm layer cache; (3) **push** image lên Container Registry; (4) **deploy** image đúng commit lên Cloud Run ở `asia-southeast1`, 1–10 instance, secret lấy từ Secret Manager.
+`service.yaml` khai báo service theo kiểu IaC: tài nguyên CPU/RAM, scale 1–10, 80 request đồng thời mỗi instance, timeout 60 giây, `startupProbe` gọi `/ready` và `livenessProbe` gọi `/health`.
+Lưu ý khi đọc: ghi chú nói pipeline tự chạy khi push lên `main`, nhưng trigger không nằm trong file này mà phải cấu hình ở Cloud Build; bước deploy trong `cloudbuild.yaml` chỉ gắn secret `OPENAI_API_KEY`, còn `AGENT_API_KEY` chỉ có trong `service.yaml`.
 
 ## Part 4: API Security
 
@@ -464,3 +501,4 @@ Xử lý input sai (AI thử trên Windows, gửi kèm API key hợp lệ): JSON
 | 5 | Tiếp tục nhờ AI cho Part 5 | AI soạn câu trả lời từ code và output tôi đã chạy | Tự chạy các lệnh test Part 5. (tự điền: đã kiểm tra và sửa gì) |
 | 6 | Dùng một phiên AI chạy song song cho Part 7 | (tự điền: hỏi gì, AI đã sửa file nào và chạy những lệnh nào) | (tự điền: đã tự chạy lại, kiểm tra code và số đo thế nào) |
 | 7 | Nhờ AI viết code Part 6 | AI viết toàn bộ `app/*.py`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `railway.toml`, `render.yaml` (tôi đã sửa `.env.example` và bắt đầu `config.py` trước đó); AI chạy script chấm trên Windows (11/12, 42/42 phép kiểm tra chạy được đạt) và thử input sai (trả 422) | Tự chạy script chấm đầy đủ trong WSL: PASS 12/12; hỏi lại AI về transaction trong rate limiter và cách xử lý SIGTERM. (tự điền thêm: đã đọc code, kiểm tra và sửa gì) |
+| 8 | Nhờ AI hướng dẫn deploy Render và viết Part 3 | AI hướng dẫn tạo Blueprint, cách đưa key vào biến mà không in ra; commit và push Part 6 theo yêu cầu của tôi; soạn `DEPLOYMENT.md`, phần so sánh config và Exercise 3.3 | Tự tạo Blueprint trên Render, tự chạy 4 lệnh kiểm tra (200 / 200 / 401 / 200). (tự điền: đã đọc lại và sửa gì) |
