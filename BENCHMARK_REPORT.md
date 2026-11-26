@@ -7,6 +7,7 @@
 **Môi trường:** Windows 11, Python 3.11.0, Docker Desktop 28.3.3 (12 CPU, khoảng 15,5 GiB cho Docker, RAM máy 31,7 GB), mock LLM. Phần develop chạy trực tiếp trên Windows.
 **Ai chạy:** các phép đo trong báo cáo này do AI (Claude Code) chạy trên máy tôi theo yêu cầu của tôi (xem AI log trong `MISSION_ANSWERS.md`).
 **Điều kiện đo:** lúc đo phần develop không có container nào đang chạy (CPU 16%, RAM trống 2,6 GB). Lúc đo production chỉ có stack observability (CPU 10% trước khi tạo tải, RAM trống 11,1 GB). Các số đo trước đó, chạy khi máy còn container khác, đã được bỏ.
+**Ghi chú về xác thực:** mọi số liệu production trong báo cáo này được đo khi stack benchmark còn xác thực bằng `X-API-Key`. Sau đó stack chuyển sang JWT (Locust đăng nhập ở `POST /auth/token` rồi gửi Bearer); số liệu không đo lại và không thay đổi. Kiểm chứng sau khi chuyển sang JWT nằm ở mục 4.4.
 
 ---
 
@@ -179,6 +180,26 @@ Metric hạ tầng không đo được câu trả lời đúng hay sai: v1 vẫn
 ```
 
 **Lưu ý về độ tin cậy của thời lượng span:** khi so 15 request chậm, 12 trace có thời lượng span khớp với `ms` trong log (lệch khoảng 1 ms), 3 trace ngắn hơn log từ 0,76 đến 1,45 giây. Log đo bằng đồng hồ đơn điệu (`perf_counter`), còn span lấy mốc theo giờ hệ thống, nên tôi suy đoán giờ hệ thống trong container (Docker trên WSL2) thỉnh thoảng bị chỉnh lùi. Theo dõi riêng 20 giây không bắt được lần nhảy nào, nên nguyên nhân chưa được xác nhận. Hai trace ở trên đã được đối chiếu khớp với log. Trong production nên so span với log khi thấy số bất thường.
+
+### 4.4 Xác thực JWT cho load test
+
+Theo yêu cầu của Lab Coach, load test phải đăng nhập lấy JWT rồi mới gọi `/ask`. Sau khi đo xong các mục 2–5, stack production chuyển sang JWT. App chính ở `06-lab-complete/app/` (bản trên Render) vẫn dùng `X-API-Key`.
+
+- **Luồng:** `POST /auth/token` với `{"username", "password"}` trả `access_token` ký HS256 (claim `sub`, `iat`, `exp`, hết hạn sau 60 phút). `/ask` yêu cầu `Authorization: Bearer <token>`. Token thiếu, sai chữ ký, hết hạn, thiếu claim hoặc sai thuật toán đều trả `401` kèm `WWW-Authenticate: Bearer`. Stack không còn nhận `X-API-Key`. Code: `production/app/auth.py`.
+- **Cấu hình:** `JWT_SECRET` (tối thiểu 32 byte), `AUTH_USERNAME`, `AUTH_PASSWORD` đọc từ biến môi trường khi agent khởi động. Thiếu biến hoặc secret ngắn thì agent không khởi động: chạy container với `JWT_SECRET=short` báo `RuntimeError` và "Application startup failed", thoát với mã 3. Giá trị mặc định trong `docker-compose.yml` chỉ dùng cho lab local; vì nó nằm trong git nên ai có repo cũng ký được token cho stack local. Đây là rủi ro chấp nhận cho lab.
+- **Locust:** mỗi user đăng nhập một lần ở `on_start`, thống kê nằm ở dòng riêng `/auth/token`. Đăng nhập lỗi thì user dừng. `/ask` trả 401 thì tính là lỗi và user đăng nhập lại.
+- **Test tự động:** 21 test trong `production/tests/test_auth.py` đều pass.
+
+**Kiểm chứng bằng Locust** (`-u 30 -r 5 -t 1m`, 2 agent, file `benchmark-results/jwt_check_stats.csv`):
+
+| Dòng | Requests | Failures | RPS | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---|---|---|---|---|
+| `/auth/token` | 30 | 0 | 0.51 | 11 | 43 | 51 |
+| `/ask` | 1055 | 7 (0.66%) | 17.85 | 190 | 220 | 1700 |
+
+Mỗi user đăng nhập đúng một lần (30 lượt cho 30 user) và không lần nào lỗi. Có 1055 request `/ask` và không có 401. Cả 7 lỗi đều là 503 do mock cố ý bơm lỗi (`jwt_check_failures.csv`). Latency `/ask` cùng mức với trước khi có JWT (p50 190 ms, p95 220 ms), vì kiểm tra chữ ký HS256 tốn rất ít thời gian so với lượt gọi LLM. Lượt đo này chỉ dùng để kiểm chứng JWT; các bảng ở mục 2–5 giữ nguyên số cũ.
+
+Ngoài ra, `run_eval.py --url http://127.0.0.1:8080 --username demo` chạy qua JWT đạt 100% (23/23), quality gate PASS. Lượt chạy này không lưu file (không dùng `--out`).
 
 ---
 

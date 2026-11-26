@@ -64,6 +64,8 @@ Khi chia sẻ màn hình: không mở phần giá trị biến trên Render, kh�
 
 ## 1. Agent production trên Render (3')
 
+> Render dùng API key, JWT chỉ áp dụng cho stack benchmark (Phần 3–5).
+
 **1.1. Bốn lệnh kiểm tra**
 
 ```powershell
@@ -169,11 +171,12 @@ curl.exe -i http://localhost:8080/metrics      # 404
 
 ## 4. Trace trong Jaeger (2')
 
-**Trace chậm:** Service `observable-agent` → Operation `POST /ask` → **Find Traces** → sắp xếp **Longest First** → mở trace khoảng 1,7 s.
+**Trace chậm:** Service `observable-agent` → Span Name `POST /ask` → **Min Duration** `1.5s` → **Find Traces** → ở chế độ *Table* bấm cột **Duration** để trace dài nhất lên đầu → mở trace khoảng 1,7 s.
+(Không đặt Min Duration thì chỉ sắp xếp trong số kết quả được trả về, mặc định 20, nên có thể không thấy trace chậm.)
 
 > **Nói:** "Span `chat mock-llm-small` chiếm gần hết thời gian, retrieval chỉ vài chục ms. Chậm ở bước gọi LLM."
 
-**Trace lỗi:** ô **Tags** nhập `error=true` → mở một trace → bấm span `chat` → **Details** → **Events** → `exception`.
+**Trace lỗi:** xoá Min Duration, ô **Attributes** nhập `error=true` → **Find Traces** → mở một trace → bấm span `chat` → **Details** → **Events** → `exception`.
 
 **Từ log sang trace:**
 
@@ -306,7 +309,8 @@ docker compose -p k5-day14-observability down -v
 | Alert mãi `pending` | Chưa đủ `for`, hoặc giá trị dao động quanh ngưỡng |
 | Latency alert không firing khi chỉ tăng user | p95 phía agent phải > 1 s **liên tục 2 phút**; dùng `MOCK_SLOW_RATE=0.3` |
 | Grafana "No data" | Chưa có traffic, hoặc chọn sai khoảng thời gian |
-| Locust báo toàn 401 | Biến `AGENT_API_KEY` của stack và Locust không khớp |
+| Locust báo lỗi ở dòng `/auth/token` (và không có `/ask`) | `AUTH_USERNAME` / `AUTH_PASSWORD` của Locust khác của agent; cả hai đọc cùng biến trong `.env`, sửa xong chạy lại `docker compose up -d` |
+| Locust báo 401 ở dòng `/ask` | Token hết hạn hoặc agent đổi `JWT_SECRET` giữa chừng; user tự đăng nhập lại, nếu vẫn lỗi thì restart Locust |
 | Render phản hồi rất chậm | Service vừa ngủ; gọi `/health` và đợi |
 | Lệnh có key trả 401 | Biến key sai; làm lại bước 0.5, kiểm tra độ dài |
 
